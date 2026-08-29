@@ -36,6 +36,22 @@ this repo is served to the public internet unauthenticated. Before adding
 any file, double-check it isn't a private key, a credential, or a
 temp/build artifact that leaked in from a build step.
 
+## Rule: a `git merge` here can silently break the database's signature
+
+A `.sig` file is not a self-contained fact — it's only valid paired with the
+exact `.db`/`.files` bytes it was generated against, but `git merge` has no
+concept of that relationship. If a branch changed the database (a real CI
+rebuild) and another branch changed only the `.sig` (a local re-sign), a
+plain `git merge` happily takes each file from whichever side touched it —
+producing a `.sig` that doesn't match its neighboring `.db`, which is worse
+than no `.sig` at all under `SigLevel = Required DatabaseOptional` (a
+present-but-invalid signature is a hard failure; a missing one is
+tolerated). This isn't hypothetical — see the incident below. Prefer never
+manually merging a locally-regenerated `.sig`/`.db` pair against `origin`;
+let the next real CI publish regenerate both together instead, or at minimum
+re-verify `gpg --verify` against the post-merge files before pushing, not
+just the pre-merge ones.
+
 ## If you have Superpowers / oh-my-opencode / ultrawork / similar available
 
 If your environment provides Claude Code's **Superpowers** plugin, OpenCode's
@@ -81,6 +97,33 @@ verification.
   which this session correctly never had or needed access to).
 - **x86_64 only.** No other architecture directories exist.
 - **CI status.** No CI workflows, no pre-commit hooks.
+- **Real incident: a `git merge` of this repo produced a mismatched
+  database signature, which cascaded into 56 packages being deleted from
+  the live repo — FIXED.** After the unsigned-database fix above was
+  committed and pushed (superseding the "left uncommitted" note), a
+  concurrent automated CI push landed on `origin/main` first; resolving
+  that with `git merge origin/main --no-edit` took the remote's newer,
+  freshly-rebuilt `shani.db.tar.gz`/`shani.files.tar.gz` but kept the
+  locally-generated `.sig` files for the *pre-merge* content (git merges
+  independently-changed files by whichever side touched them — it has no
+  idea a `.sig` is derived from its neighboring `.db`). The result: every
+  real `pacman -Sy` against this repo hard-failed signature verification
+  (`SigLevel = Required DatabaseOptional` treats a present-but-invalid
+  signature as fatal, unlike a missing one), and the CI pipeline's own
+  "remove stale packages" cleanup step then deleted 56 packages it
+  believed were no longer needed — all of which then failed to rebuild
+  because the underlying signature problem was still there. Fixed by
+  `git revert`-ing the 56-file deletion commit and `git rm`-ing the 4
+  mismatched `.sig` files outright (rather than trying to regenerate them
+  without the real signing key), then letting the next real CI publish —
+  running the fixed `pkg-builder.sh` (see `shani-builder/AUDIT-HISTORY.md`
+  for the per-call GPG-key-file races that were also found and fixed
+  during this same incident) — regenerate a correctly-signed database from
+  scratch and merge that in cleanly. Verified via `tar tzf`
+  database-vs-files consistency checks and confirming `shani.db.sig`/
+  `shani.files.sig` were real, non-empty, and produced by the same publish
+  run as the database content they accompany. See the new rule above for
+  how to avoid recreating this.
 
 ## Cross-repo impact — check before calling a fix complete
 
