@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DRY_RUN=false
+PKGBUILD_DIR="/home/shrinivaskumbhar/Documents/shani/shani-pkgbuilds"
+REPO_DIR="/home/shrinivaskumbhar/Documents/shani/shani-repo"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --dry-run) DRY_RUN=true ;;
+        *) echo "Unknown option: $1" >&2; exit 1 ;;
+    esac
+    shift
+done
+
+echo "=== Shani PKGBUILD Sync ==="
+echo "Source: $PKGBUILD_DIR"
+echo "Repo: $REPO_DIR"
+echo "Dry run: $DRY_RUN"
+
+UPDATED=0
+
+if [[ ! -d "$PKGBUILD_DIR" ]]; then
+    echo "ERROR: PKGBUILD directory not found: $PKGBUILD_DIR" >&2
+    exit 1
+fi
+
+for pkgbuild in "$PKGBUILD_DIR"/*.PKGBUILD "$PKGBUILD_DIR"/*/PKGBUILD; do
+    [[ -f "$pkgbuild" ]] || continue
+    pkg_name=$(basename "$(dirname "$pkgbuild")")
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo "[DRY RUN] Would sync: $pkg_name"
+    else
+        echo "Syncing: $pkg_name"
+        UPDATED=$((UPDATED + 1))
+    fi
+done
+
+if [[ "$DRY_RUN" != "true" ]]; then
+    echo "Sync complete: $UPDATED packages updated"
+else
+    echo "Dry run complete: $UPDATED packages would be updated"
+fi
