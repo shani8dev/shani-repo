@@ -25,15 +25,22 @@ if [[ ! -d "$PKGBUILD_DIR" ]]; then
     exit 1
 fi
 
-for pkgbuild in "$PKGBUILD_DIR"/*.PKGBUILD "$PKGBUILD_DIR"/*/PKGBUILD; do
-    [[ -f "$pkgbuild" ]] || continue
+# Find all PKGBUILD files
+mapfile -t PKGBUILDS < <(find "$PKGBUILD_DIR" -name "PKGBUILD" -type f 2>/dev/null | sort)
+
+if [[ ${#PKGBUILDS[@]} -eq 0 ]]; then
+    echo "No PKGBUILD files found in $PKGBUILD_DIR"
+    exit 0
+fi
+
+for pkgbuild in "${PKGBUILDS[@]}"; do
     pkg_name=$(basename "$(dirname "$pkgbuild")")
     if [[ "$DRY_RUN" == "true" ]]; then
         echo "[DRY RUN] Would sync: $pkg_name"
     else
         echo "Syncing: $pkg_name"
-        UPDATED=$((UPDATED + 1))
     fi
+    UPDATED=$((UPDATED + 1))
 done
 
 if [[ "$DRY_RUN" != "true" ]]; then
