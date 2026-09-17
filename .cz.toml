@@ -1,0 +1,8 @@
+[tool.commitizen]
+version = "0.0.0"
+version_scheme = "semver"
+update_changelog_on_bump = true
+tag_format = "v$version"
+allow_abort_on_fail = false
+allow_dirty = false
+name = "cz_conventional_commits"

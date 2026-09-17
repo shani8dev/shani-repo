@@ -140,3 +140,63 @@ assume compatibility, check it.
 
 `README.md` explains the `pacman.conf` entry clients use to add this repo
 and the CNAME/Pages setup.
+
+## Garuda Cross-Reference Findings (added 2026-09-17)
+
+Based on a full scan of 29 garuda-linux repos (see `../garuda-catalog.md`) mapped against shani (see `../shani-catalog.md`). chaotic-manager (repo publishing) is the most directly comparable repo — both publish packages to a local repository.
+
+### 🟡 HIGH: CI/CD gap (shared across ALL repos)
+
+1. **Shared CI templates** (estimated 2-3 days, affects ALL repos).
+   - Garuda's `gitlab-ci-commons` provides reusable templates (commitizen, flake-check, pre-commit, tag-to-release). Each repo `include:`s from it.
+   - Shani repos run on GitHub Actions (no `.gitlab-ci.yml` anywhere) — 8 repos (blog, builder, docs, fleet, insights, install-media, pkgbuilds, platform) carry hand-written `.github/workflows/*.yml` with duplicated patterns.
+   - **Action**: Create `shani-ci-commons` (GitHub Actions reusable workflows / composite actions) with templates for lint, test, build, security scan. Each repo references them via `uses: shani8dev/shani-ci-commons/...` instead of copy-pasting.
+   - **Affects**: All 15 shani repos.
+
+### 🟡 HIGH: Dependency management gap
+
+2. **Add automated dependency updates** (estimated 4 hours, affects ALL repos).
+   - Garuda uses `renovate-runner` running hourly against all repos with `renovate.json` files.
+   - Shani repos have no automated dependency updating.
+   - **Action**: Set up Renovate (self-hosted or gitlab.com) with a fleet-wide config. Each repo adds a minimal `renovate.json`.
+
+### 🟢 MEDIUM: Code quality
+
+3. **Conventional commit enforcement** (estimated 2 hours, affects ALL repos).
+   - Every garuda repo has a `[commitizen]` badge; `cz commit` is enforced.
+   - Shani repos have no commit message standardization.
+
+### 🔗 Cross-repo context
+
+4. **This repo is generated output** — `shani-builder/pkg/pkg-builder.sh` builds, signs, and publishes packages here. This repo is mostly generated output from `shani-builder`, not hand-edited. Changes should originate in `shani-builder`, not here directly.
+
+### 🔍 Re-Scan Findings (2026-09-17)
+
+Re-scanned against `../garuda-catalog.md` (29 actual garuda repos — garuda-repo and others from the original 34-repo mapping do NOT exist).
+
+**Confirmed mapping**: **chaotic-manager** (`garuda-clones/chaotic-manager/`) remains the closest counterpart — both publish packages to a repository — and the reference above is valid. **chaotic-portable-builder** also builds into a local repo.
+
+**New gaps discovered** (chaotic-manager repo-management features shani-repo lacks):
+1. **No repo-management API** — chaotic-manager's `repo-manager.ts` manages the repository programmatically (Express API on port 8080); shani-repo is static generated output with no management interface.
+2. **No automated PKGBUILD update pipeline** — chaotic-manager's CI parses PKGBUILDs, builds schedules, and auto-updates from AUR/GitLab on half-hourly tag checks; shani-repo only receives what `pkg-builder.sh` pushes.
+3. **No build/event notifications** — chaotic-manager ships `telegram-bot.ts`; shani-repo has no notification channel for publish events.
+4. **No multi-arch support** — garuda repos serve multiple architectures; shani-repo is x86_64-only (already noted above).
+
+**Shani advantages**:
+1. **Signed database verified against real pacman** — `shani.db.sig`/`shani.files.sig` verified via a genuine `pacman -Sy` with `SigLevel = Required DatabaseOptional`; garuda relies on Chaotic-AUR keys.
+2. **Documented merge-signature incident** — the `.sig`/`.db` merge-mismatch failure mode and its fix are documented in this file; garuda repos have no such documentation.
+3. **Single signing key** (`7B927BFF...4792`) — simpler trust model than garuda's multi-key Chaotic-AUR setup.
+
+### 📋 Implementation Roadmap (2026-09-17)
+
+Implementation priorities are per `../IMPLEMENTATION-ROADMAP.md` (master roadmap for the whole shani ecosystem).
+
+1. **CI Workflow Verifying Repo Integrity** (P1, ~2-3 days) — Currently zero CI workflows and zero pre-commit hooks. Every commit should verify that all `.sig` files match their corresponding `.db`/`.files` against the packaging key, and that `.db` archives are parseable (`tar -tzf` + `pacman-db-upgrade` dry-run). This repo is served to the public internet — a corrupted database or mismatched signature (the real incident documented above where `git merge` broke 56 packages) should be caught before push, not after. Use `shani-ci-commons` templates. Source: IMPLEMENTATION-ROADMAP.md #7.
+
+2. **Automated Sync Check for `.db`/`.sig` Pairs** (P2, ~1 day) — Script to verify every `.db`/`.files`/`.sig` triplet verifies with GPG before and after any git merge or manual operation. This is the mechanical enforcement of the rule documented above ("a `git merge` here can silently break the database's signature"). Could be a pre-commit hook or a post-merge CI step — either way, the gap is that today this verification is only done by hand. Source: IMPLEMENTATION-ROADMAP.md (shani-repo gap analysis).
+
+3. **Automated PKGBUILD Update Checks from AUR/GitLab** (P3, ~2-3 days) — Adapt chaotic-manager's `repo-manager.ts` pattern: scheduled CI pipeline that checks tracked packages for new upstream tags, opens a merge request when an update is available (not auto-merged — human review required). Currently shani-repo only receives what `pkg-builder.sh` pushes with no source-drift detection. Source: IMPLEMENTATION-ROADMAP.md #32.
+
+4. **Renovate, Conventional Commits** (P1, ~2 hours, cross-repo) — Add fleet-wide Renovate for automated dependency updates and commitizen for conventional commit enforcement. This repo is mostly generated output, so Renovate's value is limited here — but conventional commits on the automated publish commits would make the git log meaningful for debugging which publish introduced a regression. Source: IMPLEMENTATION-ROADMAP.md #8, #9.
+
+5. **Multi-Architecture Support** (P3, future consideration) — Currently x86_64 only with no other architecture directories. If shani targets ARM/aarch64 in the future, this repo would need a parallel architecture tree. Not urgent — x86_64-only is appropriate for shani's current hardware targets.

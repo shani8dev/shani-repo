@@ -1,0 +1,21 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "commitMessagePrefix": "fix(deps): ",
+  "commitMessageSuffix": "",
+  "groupName": "GitHub Actions",
+  "group": {
+    "matches": [
+      {
+        "depTypeList": ["github-actions"],
+        "sourceUrlPrefix": "https://github.com/"
+      }
+    ]
+  },
+  "platformAutomerge": true,
+  "automerge": true,
+  "automergeType": "pr",
+  "labels": ["dependencies", "automerged"]
+}
