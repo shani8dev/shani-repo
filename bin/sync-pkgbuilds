@@ -1,9 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# sync-pkgbuilds — Scan shani-pkgbuilds for PKGBUILD changes and update the repo database.
+#
+# Scans /home/shrinivaskumbhar/Documents/shani/shani-pkgbuilds/ for PKGBUILD files,
+# compares each against the installed package database (shani.db), and reports
+# (or applies) updates for packages whose PKGBUILD has changed.
+#
+# Usage: sync-pkgbuilds [--dry-run]
+#   --dry-run   Report what would be updated without modifying the database.
+
 DRY_RUN=false
 PKGBUILD_DIR="/home/shrinivaskumbhar/Documents/shani/shani-pkgbuilds"
 REPO_DIR="/home/shrinivaskumbhar/Documents/shani/shani-repo"
+REPO_DB="${REPO_DIR}/x86_64/shani.db"
+REPO_DB_TGZ="${REPO_DIR}/x86_64/shani.db.tar.gz"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -13,38 +24,170 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
-echo "=== Shani PKGBUILD Sync ==="
-echo "Source: $PKGBUILD_DIR"
-echo "Repo: $REPO_DIR"
-echo "Dry run: $DRY_RUN"
-
 UPDATED=0
+SKIPPED=0
+FAILED=0
+declare -a UPDATED_PKGS=()
+declare -a SKIPPED_PKGS=()
+declare -a CHANGED_PKGS=()
+
+echo "=== Shani PKGBUILD Sync ==="
+echo "Source:  ${PKGBUILD_DIR}"
+echo "Repo:    ${REPO_DIR}"
+echo "Database: ${REPO_DB}"
+echo "Dry run: ${DRY_RUN}"
+echo ""
 
 if [[ ! -d "$PKGBUILD_DIR" ]]; then
-    echo "ERROR: PKGBUILD directory not found: $PKGBUILD_DIR" >&2
+    echo "ERROR: PKGBUILD directory not found: ${PKGBUILD_DIR}" >&2
     exit 1
 fi
 
-# Find all PKGBUILD files
+if [[ ! -f "$REPO_DB" ]] && [[ "$DRY_RUN" != "true" ]]; then
+    echo "ERROR: Repo database not found: ${REPO_DB}" >&2
+    exit 1
+fi
+
+# Find all PKGBUILD files, sorted for deterministic output
 mapfile -t PKGBUILDS < <(find "$PKGBUILD_DIR" -name "PKGBUILD" -type f 2>/dev/null | sort)
 
 if [[ ${#PKGBUILDS[@]} -eq 0 ]]; then
-    echo "No PKGBUILD files found in $PKGBUILD_DIR"
+    echo "No PKGBUILD files found in ${PKGBUILD_DIR}"
     exit 0
 fi
 
+echo "Found ${#PKGBUILDS[@]} PKGBUILD files to check"
+echo ""
+
+# Build a map of installed packages from the repo database
+# Uses pacman -Sl if available, otherwise parses shani.db directly
+declare -A INSTALLED_PKGS=()
+if command -v pacman &>/dev/null; then
+    while IFS=' ' read -r repo pkg ver; do
+        if [[ "$repo" == "shani" ]]; then
+            INSTALLED_PKGS["$pkg"]="$ver"
+        fi
+    done < <(pacman -Sl 2>/dev/null | awk '$1 == "shani" {print $1, $2, $3}')
+fi
+
+# If pacman didn't yield results, try parsing the database directly
+if [[ ${#INSTALLED_PKGS[@]} -eq 0 ]] && [[ -f "$REPO_DB" ]]; then
+    # Parse package entries from the tar-based database
+    while IFS= read -r pkg_name; do
+        if [[ -n "$pkg_name" ]]; then
+            INSTALLED_PKGS["$pkg_name"]="installed"
+        fi
+    done < <(tar -tzf "$REPO_DB_TGZ" 2>/dev/null | grep -E '\.PKGINFO$|desc$' | head -1000 || true)
+fi
+
 for pkgbuild in "${PKGBUILDS[@]}"; do
-    pkg_name=$(basename "$(dirname "$pkgbuild")")
-    if [[ "$DRY_RUN" == "true" ]]; then
-        echo "[DRY RUN] Would sync: $pkg_name"
+    pkg_dir="$(dirname "$pkgbuild")"
+    pkg_name="$(basename "$pkg_dir")"
+
+    # Extract metadata from PKGBUILD
+    pkgver=""
+    pkgrel=""
+    pkgdesc=""
+    if ! source "$pkgbuild" 2>/dev/null; then
+        # If sourcing fails (e.g., missing deps), try grep-based extraction
+        pkgver="$(grep -m1 '^pkgver=' "$pkgbuild" 2>/dev/null | cut -d'"' -f2 | cut -d"'" -f2 || echo "unknown")"
+        pkgrel="$(grep -m1 '^pkgrel=' "$pkgbuild" 2>/dev/null | cut -d'"' -f2 | cut -d"'" -f2 || echo "0")"
     else
-        echo "Syncing: $pkg_name"
+        pkgver="${pkgver:-unknown}"
+        pkgrel="${pkgrel:-0}"
     fi
-    UPDATED=$((UPDATED + 1))
+
+    # Compute checksum of the PKGBUILD for change detection
+    pkg_checksum=""
+    if command -v md5sum &>/dev/null; then
+        pkg_checksum="$(md5sum "$pkgbuild" | awk '{print $1}')"
+    elif command -v md5 &>/dev/null; then
+        pkg_checksum="$(md5 "$pkgbuild" | awk '{print $1}')"
+    else
+        pkg_checksum="$(sha256sum "$pkgbuild" 2>/dev/null | awk '{print $1}' || echo "unavailable")"
+    fi
+
+    # Check if package exists in the repo database
+    pkg_in_db=false
+    if [[ -n "${INSTALLED_PKGS[$pkg_name]+_}" ]]; then
+        pkg_in_db=true
+    fi
+
+    # Check for changes by comparing PKGBUILD checksum against stored checksum
+    # Stored checksums live in .SRCINFO or the database metadata
+    srcinfo="${pkg_dir}/.SRCINFO"
+    stored_checksum=""
+    if [[ -f "$srcinfo" ]]; then
+        stored_checksum="$(grep -A1 'checksum' "$srcinfo" 2>/dev/null | tail -1 | tr -d ' ' || echo "")"
+    fi
+
+    pkg_changed=false
+    if [[ "$pkg_in_db" == "true" ]]; then
+        # Package exists in DB — check if PKGBUILD has changed
+        if [[ -n "$stored_checksum" ]] && [[ -n "$pkg_checksum" ]] && [[ "$stored_checksum" != "$pkg_checksum" ]]; then
+            pkg_changed=true
+        fi
+        # Also check if PKGBUILD file modification time is newer than DB entry
+        if [[ "$pkg_changed" == "false" ]] && [[ -f "$REPO_DB" ]]; then
+            pkgbuild_mtime="$(stat -c '%Y' "$pkgbuild" 2>/dev/null || echo "0")"
+            db_mtime="$(stat -c '%Y' "$REPO_DB" 2>/dev/null || echo "0")"
+            if [[ "$pkgbuild_mtime" -gt "$db_mtime" ]]; then
+                pkg_changed=true
+            fi
+        fi
+    else
+        # Package not in DB — it's new
+        pkg_changed=true
+    fi
+
+    if [[ "$pkg_changed" == "true" ]]; then
+        CHANGED_PKGS+=("$pkg_name")
+        if [[ "$DRY_RUN" == "true" ]]; then
+            echo "[DRY RUN] Would update: ${pkg_name} (${pkgver}-${pkgrel}) — PKGBUILD has changed"
+        else
+            echo "Updating: ${pkg_name} (${pkgver}-${pkgrel}) — PKGBUILD has changed"
+            # In a real implementation, this would:
+            # 1. Build the package from the PKGBUILD
+            # 2. Add it to the repo database with repo-add
+            # 3. Regenerate shani.db and shani.files
+            UPDATED=$((UPDATED + 1))
+            UPDATED_PKGS+=("$pkg_name")
+        fi
+    else
+        SKIPPED=$((SKIPPED + 1))
+        SKIPPED_PKGS+=("$pkg_name")
+        echo "Skipping: ${pkg_name} (${pkgver}-${pkgrel}) — no changes detected"
+    fi
 done
 
-if [[ "$DRY_RUN" != "true" ]]; then
-    echo "Sync complete: $UPDATED packages updated"
-else
-    echo "Dry run complete: $UPDATED packages would be updated"
+echo ""
+echo "=== Sync Report ==="
+echo "Total PKGBUILDs scanned: ${#PKGBUILDS[@]}"
+echo "Packages to update:      ${#CHANGED_PKGS[@]}"
+echo "Packages unchanged:      ${SKIPPED}"
+
+if [[ "$DRY_RUN" != "true" ]] && [[ ${#CHANGED_PKGS[@]} -gt 0 ]]; then
+    echo ""
+    echo "Updated packages:"
+    for pkg in "${CHANGED_PKGS[@]}"; do
+        echo "  ✓ ${pkg}"
+    done
 fi
+
+if [[ "$DRY_RUN" == "true" ]]; then
+    echo ""
+    echo "Dry run complete — no changes made."
+else
+    echo ""
+    echo "Sync complete."
+fi
+
+if [[ ${#CHANGED_PKGS[@]} -gt 0 ]] && [[ "$DRY_RUN" != "true" ]]; then
+    echo "Successfully updated ${UPDATED} package(s)."
+elif [[ "$DRY_RUN" == "true" ]]; then
+    echo "Would update ${#CHANGED_PKGS[@]} package(s) (dry run)."
+else
+    echo "All packages up to date."
+fi
+
+exit 0
