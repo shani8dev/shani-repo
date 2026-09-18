@@ -17,6 +17,14 @@ PKGBUILD sources these get built from; verified via
 `grep -rln "repo-add" **/*.sh` across the whole ecosystem, since an
 earlier version of this file pointed at the wrong repo), not direct edits.
 
+## Empirical verification (mandatory)
+
+**Reading code is analysis; running code is verification.** A change is not
+verified by reading the diff, running `bash -n`, or confirming it "looks
+correct." It is verified by observing the actual behavior of the real
+thing in the real environment — built, served, deployed, signed, running.
+If you haven't seen it work (or fail) for real, it isn't verified.
+
 ## Rule: verify what actually gets served, not just what's committed
 
 Before considering a change here done:
