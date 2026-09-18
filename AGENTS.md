@@ -70,6 +70,18 @@ time when checking repo-wide signing state, rather than letting a skill
 framework's plan-and-report output substitute for actually running the
 verification.
 
+## Boundaries
+
+- ✅ **Always**: `gpg --verify` any `.sig` against its neighboring `.db`/
+  `.files` bytes — post-merge, not just pre-merge — before pushing.
+- ⚠️ **Ask first**: manually merging a locally-regenerated `.sig`/`.db` pair
+  against `origin` — prefer letting the next real CI publish regenerate
+  both together (see the rule above; this exact shortcut caused the
+  56-package-deletion incident documented below).
+- 🚫 **Never**: commit anything not meant to be fully public — everything
+  here is served unauthenticated to the internet; double-check any added
+  file isn't a private key, credential, or leaked build artifact.
+
 ## Audit-verified known issues (confirmed present)
 
 - **Unsigned package database (Critical) — FIXED.** Was: `shani.db`/
@@ -104,7 +116,12 @@ verification.
   standing in for the real `GPG_PRIVATE_KEY`/`GPG_PASSPHRASE` CI secrets,
   which this session correctly never had or needed access to).
 - **x86_64 only.** No other architecture directories exist.
-- **CI status.** No CI workflows, no pre-commit hooks.
+- **CI status — corrected, was stale.** `.github/workflows/ci.yml` runs
+  `scripts/check-repo-integrity.sh` on push/PR: verifies every `.sig`
+  under `x86_64/` against the real signing key (imported into a throwaway
+  `GNUPGHOME`, never the real keyring) and confirms every `.db`/`.files`
+  archive is `tar -tzf`-parseable — 52/52 signatures, 4/4 archives
+  verified live (2026-09-18). No pre-commit hooks.
 - **Real incident: a `git merge` of this repo produced a mismatched
   database signature, which cascaded into 56 packages being deleted from
   the live repo — FIXED.** After the unsigned-database fix above was
@@ -199,7 +216,7 @@ Re-scanned against `../garuda-catalog.md` (29 actual garuda repos — garuda-rep
 
 Implementation priorities are per `../IMPLEMENTATION-ROADMAP.md` (master roadmap for the whole shani ecosystem).
 
-1. **CI Workflow Verifying Repo Integrity** (P1, ~2-3 days) — Currently zero CI workflows and zero pre-commit hooks. Every commit should verify that all `.sig` files match their corresponding `.db`/`.files` against the packaging key, and that `.db` archives are parseable (`tar -tzf` + `pacman-db-upgrade` dry-run). This repo is served to the public internet — a corrupted database or mismatched signature (the real incident documented above where `git merge` broke 56 packages) should be caught before push, not after. Use `shani-ci-commons` templates. Source: IMPLEMENTATION-ROADMAP.md #7.
+1. ~~**CI Workflow Verifying Repo Integrity** (P1, ~2-3 days).~~ **DONE (2026-09-18)** — see "Audit-verified known issues" above: `ci.yml` + `check-repo-integrity.sh` verify every `.sig`/`.db`/`.files` on push/PR. Not yet migrated to `shani-ci-commons` templates (still a standalone workflow, per the top-level AGENTS.md's note that this repo is not currently a `shani-ci-commons` consumer) — that migration is the remaining piece of this item, not the integrity check itself. Source: IMPLEMENTATION-ROADMAP.md #7.
 
 2. **Automated Sync Check for `.db`/`.sig` Pairs** (P2, ~1 day) — Script to verify every `.db`/`.files`/`.sig` triplet verifies with GPG before and after any git merge or manual operation. This is the mechanical enforcement of the rule documented above ("a `git merge` here can silently break the database's signature"). Could be a pre-commit hook or a post-merge CI step — either way, the gap is that today this verification is only done by hand. Source: IMPLEMENTATION-ROADMAP.md (shani-repo gap analysis).
 
