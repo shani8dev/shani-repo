@@ -70,6 +70,13 @@ time when checking repo-wide signing state, rather than letting a skill
 framework's plan-and-report output substitute for actually running the
 verification.
 
+## Commit discipline
+
+Before composing a commit message, run `git log --oneline -20` (and `git
+log -5 -- <touched paths>` for the files you changed) and match the
+existing style — subject shape, scope prefixes, body detail level —
+rather than writing in a generic format.
+
 ## Boundaries
 
 - ✅ **Always**: `gpg --verify` any `.sig` against its neighboring `.db`/
