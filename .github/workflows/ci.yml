@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify-repo-integrity:
+    name: Verify Repository Integrity
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Checkout shani-keyring
+        uses: actions/checkout@v4
+        with:
+          repository: shani8dev/shani-keyring
+          path: shani-keyring
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gnupg tar
+
+      - name: Verify repository integrity
+        run: |
+          ./scripts/check-repo-integrity.sh
