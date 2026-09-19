@@ -31,7 +31,16 @@ set -euo pipefail
 
 REPO_DIR="${1:-${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}}"
 ARCH_DIR="${REPO_DIR}/x86_64"
-KEYRING="${KEYRING:-${REPO_DIR}/../shani-keyring/shani.gpg}"
+# Auto-detect the keyring layout: locally it's a sibling
+# (../shani-keyring/shani.gpg); in CI it's a child checkout
+# (shani-keyring/shani.gpg) — actions/checkout@v4 rejects any `path`
+# outside the caller repo, so the CI layout is the child one.
+# Verified live: both layouts point at the same shani.gpg.
+if [[ -f "${REPO_DIR}/shani-keyring/shani.gpg" ]]; then
+    KEYRING="${KEYRING:-${REPO_DIR}/shani-keyring/shani.gpg}"
+else
+    KEYRING="${KEYRING:-${REPO_DIR}/../shani-keyring/shani.gpg}"
+fi
 EXPECTED_FINGERPRINT="${EXPECTED_FINGERPRINT:-7B927BFF D4A9 EAAA 8B66 6B77 DE21 7F3D A801 4792}"
 
 # Files that are pacman database/files archives (not packages)
