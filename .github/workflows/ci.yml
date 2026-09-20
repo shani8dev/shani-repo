@@ -7,9 +7,16 @@ on:
     branches: [main]
 
 jobs:
+  lint:
+    name: Lint
+    uses: shani8dev/shani-ci-commons/.github/workflows/lint.yml@main
+    with:
+      language: bash
+
   verify-repo-integrity:
     name: Verify Repository Integrity
     runs-on: ubuntu-latest
+    needs: lint
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -28,3 +35,10 @@ jobs:
       - name: Verify repository integrity
         run: |
           ./scripts/check-repo-integrity.sh
+
+  security:
+    name: Security
+    uses: shani8dev/shani-ci-commons/.github/workflows/security.yml@main
+    with:
+      scan-type: secrets
+    needs: lint
